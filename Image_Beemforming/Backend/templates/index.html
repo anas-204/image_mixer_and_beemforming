@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FT Mixer & Beamforming App</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>Part A: FT Magnitude/Phase Mixer</h1>
+        
+        <!-- Input Images Grid -->
+        <div class="grid-container inputs">
+            <!-- Repeats for 4 Images -->
+            {% for i in range(1, 5) %}
+            <div class="image-card" id="card{{i}}">
+                
+                <!-- Header & Upload -->
+                <div class="card-header">
+                    <span>Image {{i}}</span>
+                    <input type="file" id="file{{i}}" hidden accept="image/*" onchange="uploadImage('{{i}}')">
+                    <button onclick="document.getElementById('file{{i}}').click()">Upload</button>
+                </div>
+
+                <!-- Main Image Viewport -->
+                <div class="viewport" ondblclick="document.getElementById('file{{i}}').click()">
+                    <img id="img{{i}}" src="" alt="Double click">
+                </div>
+
+                <!-- FT Component Viewport -->
+                <div class="ft-section">
+                    <select id="ftSelect{{i}}" onchange="updateFTDisplay('{{i}}')">
+                        <option value="magnitude">FT Magnitude</option>
+                        <option value="phase">FT Phase</option>
+                        <option value="real">FT Real</option>
+                        <option value="imaginary">FT Imaginary</option>
+                    </select>
+                    <!-- Canvas for drawing rectangles over the FT Image -->
+                    <div class="viewport ft-viewport">
+                        <canvas id="ftCanvas{{i}}"></canvas>
+                    </div>
+                </div>
+
+                <!-- Controls -->
+                <div class="controls">
+                    <!-- Sliders -->
+                    <div class="slider-group">
+                        <label>Mag: <span id="valMag{{i}}">0</span>%</label>
+                        <input type="range" id="sliderMag{{i}}" min="0" max="100" value="0" oninput="updateMix()">
+                    </div>
+                    <div class="slider-group">
+                        <label>Phase: <span id="valPhase{{i}}">0</span>%</label>
+                        <input type="range" id="sliderPhase{{i}}" min="0" max="100" value="0" oninput="updateMix()">
+                    </div>
+
+                    <!-- Region Filters -->
+                    <div class="region-controls">
+                        <small>Region Filter:</small>
+                        <div>
+                            <span>Mag:</span>
+                            <label><input type="radio" name="regionMag{{i}}" value="inner" checked onchange="updateMix()"> Inner</label>
+                            <label><input type="radio" name="regionMag{{i}}" value="outer" onchange="updateMix()"> Outer</label>
+                        </div>
+                        <div>
+                            <span>Phase:</span>
+                            <label><input type="radio" name="regionPhase{{i}}" value="inner" checked onchange="updateMix()"> Inner</label>
+                            <label><input type="radio" name="regionPhase{{i}}" value="outer" onchange="updateMix()"> Outer</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <!-- Output Section -->
+        <div class="output-section">
+            <div class="output-card">
+                <h3>Mixed Output</h3>
+                <div class="viewport output-viewport">
+                    <img id="outputImg1" src="" alt="Result">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>
