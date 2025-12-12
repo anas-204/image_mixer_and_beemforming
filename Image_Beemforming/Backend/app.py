@@ -17,65 +17,73 @@ def index():
 
 @app.route('/upload/<int:slot_id>', methods=['POST'])
 def upload_file(slot_id):
-    if 'file' not in request.files:
-        return jsonify({'error': 'No file part'}), 400
+    if 'file' not in request.files: return jsonify({'error': 'No file'}), 400
     file = request.files['file']
-    if file.filename == '':
-        return jsonify({'error': 'No selected file'}), 400
+    if file.filename == '': return jsonify({'error': 'Empty'}), 400
 
     filepath = os.path.join(app.config['UPLOAD_FOLDER'], f'image_{slot_id}.png')
     file.save(filepath)
-
     mixer.update_image(slot_id - 1, filepath)
     return jsonify({'filepath': filepath})
 
-# NEW: Endpoint to get FT components
 @app.route('/component/<int:slot_id>/<type>', methods=['GET'])
 def get_component(slot_id, type):
-    """Returns the requested FT component (Mag, Phase, Real, Imag) as base64"""
-    # Adjust slot_id (1-based from frontend to 0-based index)
-    img_processor = mixer.images[slot_id - 1]
+    idx = slot_id - 1
+    if idx < 0 or idx >= 4: return "Error", 400
     
-    result_img = img_processor.get_component_display(type)
+    img_processor = mixer.images[idx]
+    
+    if type == 'image':
+        result_img = img_processor.get_image_display()
+    else:
+        result_img = img_processor.get_component_display(type)
     
     if result_img is None:
-        # Return a placeholder black image if not loaded
-        placeholder = np.zeros((200, 200), dtype=np.uint8)
-        _, buffer = cv2.imencode('.png', placeholder)
-        return base64.b64encode(buffer).decode('utf-8')
+        result_img = np.zeros((200, 200), dtype=np.uint8)
 
     _, buffer = cv2.imencode('.png', result_img)
-    img_str = base64.b64encode(buffer).decode('utf-8')
-    return jsonify({'image_data': img_str})
+    return jsonify({'image_data': base64.b64encode(buffer).decode('utf-8')})
+
+@app.route('/adjust_bc', methods=['POST'])
+def adjust_bc():
+    data = request.json
+    slot_id = int(data['slot_id'])
+    b = float(data['brightness'])
+    c = float(data['contrast'])
+    mixer.adjust_image_bc(slot_id - 1, b, c)
+    return jsonify({'status': 'ok'})
 
 @app.route('/process_ft', methods=['POST'])
 def process_ft():
     data = request.json
     
-    w_mag = [float(data['weights_mag'][f'img{i+1}']) for i in range(4)]
-    w_phase = [float(data['weights_phase'][f'img{i+1}']) for i in range(4)]
+    mode = data.get('mode', 'magnitude_phase')
     
-    region_info = None
+    # Gather granular data
+    # We expect weights_1 and weights_2 to be lists of 4 floats
+    # region_settings_1 and region_settings_2 to be lists of 4 strings
+    
+    w1 = [float(x) for x in data['weights_1']]
+    w2 = [float(x) for x in data['weights_2']]
+    r1 = data['region_settings_1']
+    r2 = data['region_settings_2']
+    
+    global_region = None
     if data.get('region_enabled', False):
-        region_info = {
-            'x': int(data['region']['x']),
-            'y': int(data['region']['y']),
-            'w': int(data['region']['width']),
-            'h': int(data['region']['height']),
-            # These keys match what main.js sends
-            'mag_modes': [data['region_modes_mag'][f'img{i+1}'] for i in range(4)],
-            'phase_modes': [data['region_modes_phase'][f'img{i+1}'] for i in range(4)]
+        global_region = {
+            'x': float(data['region']['x']),
+            'y': float(data['region']['y']),
+            'w': float(data['region']['width']),
+            'h': float(data['region']['height'])
         }
 
-    result_img = mixer.mix(w_mag, w_phase, region_info)
+    result_img = mixer.mix(w1, w2, r1, r2, global_region, mode)
 
     if result_img is None:
-        return jsonify({'error': 'No images loaded'}), 400
+        return jsonify({'error': 'No images'}), 400
 
     _, buffer = cv2.imencode('.png', result_img)
-    img_str = base64.b64encode(buffer).decode('utf-8')
-
-    return jsonify({'image_data': img_str})
+    return jsonify({'image_data': base64.b64encode(buffer).decode('utf-8')})
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)

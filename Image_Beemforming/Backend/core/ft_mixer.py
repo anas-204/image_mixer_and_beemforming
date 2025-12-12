@@ -11,6 +11,10 @@ class FTMixer:
             self.images[index].load_image(filepath)
             self.unify_sizes()
 
+    def adjust_image_bc(self, index, brightness, contrast):
+        if 0 <= index < 4:
+            self.images[index].apply_brightness_contrast(brightness, contrast)
+
     def unify_sizes(self):
         valid_images = [img for img in self.images if img.original_data is not None]
         if not valid_images:
@@ -23,75 +27,75 @@ class FTMixer:
             if img.shape[0] != min_h or img.shape[1] != min_w:
                 img.resize(min_w, min_h)
 
-    def mix(self, weights_mag, weights_phase, region_info=None):
+    def mix(self, weights_1, weights_2, region_settings_1, region_settings_2, global_region, mode):
+        """
+        Mixes images with granular control.
+        weights_1: List of 4 floats for Component 1 (Mag or Real)
+        weights_2: List of 4 floats for Component 2 (Phase or Imag)
+        region_settings_1: List of 4 strings ('inner'/'outer') for Comp 1
+        region_settings_2: List of 4 strings ('inner'/'outer') for Comp 2
+        global_region: Dict {x, y, w, h} (normalized 0-1)
+        mode: 'magnitude_phase' or 'real_imaginary'
+        """
         valid_images = [img for img in self.images if img.original_data is not None]
         if not valid_images:
             return None
 
         base_h, base_w = valid_images[0].shape
         
-        mixed_mag = np.zeros((base_h, base_w), dtype=np.float64)
-        mixed_phase = np.zeros((base_h, base_w), dtype=np.float64)
-
-        # Create Region Mask
-        # Default: All ones (pass everything)
-        mask_inner = np.ones((base_h, base_w), dtype=np.float64)
+        # 1. Create the Global Masks (Inner and Outer)
+        mask_inner = np.zeros((base_h, base_w), dtype=np.float64)
         
-        if region_info:
-            # We assume inputs are normalized floats (0.0 to 1.0)
-            # We usually mix frequencies with the Center being DC.
-            # But the user draws on the "shifted" spectrum (center is middle of image).
-            # So the rect coordinates correspond directly to the shifted FFT array indices.
+        if global_region:
+            rx = int(global_region['x'] * base_w)
+            ry = int(global_region['y'] * base_h)
+            rw = int(global_region['w'] * base_w)
+            rh = int(global_region['h'] * base_h)
             
-            x_norm, y_norm = region_info['x'], region_info['y']
-            w_norm, h_norm = region_info['w'], region_info['h']
-
-            # Convert to pixels
-            x = int(x_norm * base_w)
-            y = int(y_norm * base_h)
-            w = int(w_norm * base_w)
-            h = int(h_norm * base_h)
-
-            # Create the mask
-            # Start with Zeros
-            mask_inner = np.zeros((base_h, base_w), dtype=np.float64)
+            rx = max(0, min(rx, base_w))
+            ry = max(0, min(ry, base_h))
+            rw = max(0, min(rw, base_w - rx))
+            rh = max(0, min(rh, base_h - ry))
             
-            # Set region to 1
-            # Check bounds
-            x = max(0, min(x, base_w))
-            y = max(0, min(y, base_h))
-            w = max(0, min(w, base_w - x))
-            h = max(0, min(h, base_h - y))
-            
-            if w > 0 and h > 0:
-                mask_inner[y:y+h, x:x+w] = 1.0
-
+            if rw > 0 and rh > 0:
+                mask_inner[ry:ry+rh, rx:rx+rw] = 1.0
+        
         mask_outer = 1.0 - mask_inner
+
+        # 2. Accumulate Components
+        # Initialize accumulators
+        comp1_acc = np.zeros((base_h, base_w), dtype=np.float64)
+        comp2_acc = np.zeros((base_h, base_w), dtype=np.float64)
 
         for i in range(4):
             img = self.images[i]
-            if img.original_data is None:
-                continue
+            if img.original_data is None: continue
 
-            # Magnitude Region Logic
-            m_mode = region_info['mag_modes'][i] if region_info else 'inner'
-            if m_mode == 'inner':
-                mag_contrib = img.magnitude * mask_inner
-            else: # outer
-                mag_contrib = img.magnitude * mask_outer
-            
-            # Phase Region Logic
-            p_mode = region_info['phase_modes'][i] if region_info else 'inner'
-            if p_mode == 'inner':
-                phase_contrib = img.phase * mask_inner
-            else: # outer
-                phase_contrib = img.phase * mask_outer
+            # --- Select Data Sources based on Mode ---
+            if mode == 'real_imaginary':
+                data1 = img.real
+                data2 = img.imaginary
+            else: # magnitude_phase
+                data1 = img.magnitude
+                data2 = img.phase
 
-            mixed_mag += mag_contrib * weights_mag[i]
-            mixed_phase += phase_contrib * weights_phase[i]
+            # --- Apply Region Logic for Component 1 ---
+            # If setting is 'inner', we keep ONLY inner part (data * mask_inner)
+            # If setting is 'outer', we keep ONLY outer part (data * mask_outer)
+            mask1 = mask_inner if region_settings_1[i] == 'inner' else mask_outer
+            comp1_acc += data1 * mask1 * weights_1[i]
 
-        combined_complex = mixed_mag * np.exp(1j * mixed_phase)
-        
+            # --- Apply Region Logic for Component 2 ---
+            mask2 = mask_inner if region_settings_2[i] == 'inner' else mask_outer
+            # Special case for Phase: 0 phase outside mask is mathematically fine
+            comp2_acc += data2 * mask2 * weights_2[i]
+
+        # 3. Recombine and Inverse FFT
+        if mode == 'real_imaginary':
+            combined_complex = comp1_acc + 1j * comp2_acc
+        else: # magnitude_phase
+            combined_complex = comp1_acc * np.exp(1j * comp2_acc)
+
         f_ishift = np.fft.ifftshift(combined_complex)
         img_back = np.fft.ifft2(f_ishift)
         img_back = np.abs(img_back)
